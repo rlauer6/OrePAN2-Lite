@@ -1,0 +1,10 @@
+package OrePAN2::Lite;
+
+use strict;
+use warnings;
+
+our $VERSION = '@PACKAGE_VERSION@';
+
+use parent qw(OrePAN2);
+
+1;

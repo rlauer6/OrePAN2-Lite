@@ -1,0 +1,39 @@
+---
+project:
+  description: OrePAN2::Lite
+  author:
+    name: Rob Lauer
+    mailto: rclauer@gmail.com
+pm_module: OrePAN2::Lite
+min-perl-version: 5.010
+dependencies:
+  requires: requires
+  test_requires: test-requires
+path:
+  pm_module: lib
+  exe_files: bin
+  tests: t
+extra-files:
+  - ChangeLog
+  - share:
+      - README.md
+  - t/dat:
+      - t/dat/02.packages.details.txt
+      - t/dat/02.packages.details.txt.gz
+      - t/dat/Acme-Foo-0.01.tar.gz
+      - t/dat/Acme-YakiniQ-0.01.tar.gz
+  - t/dat/modules:
+      - t/dat/modules/02.packages.txt
+  - t/dat/auditor/cpan:
+      - t/dat/auditor/cpan/02packages.details.txt
+  - t/dat/auditor/darkpan:
+      - t/dat/auditor/darkpan/02packages.details.txt
+resources:
+  bugtracker:
+    mailto: rclauer@gmail.com
+    web: https://github.com/rlauer6/OrePAN2-Lite/issues
+  homepage: https://github.com/rlauer6/OrePAN2-Lite
+  repository:
+    type: git
+    url: git@github.com:rlauer6/OrePAN2-Lite.git
+    web: https://github.com/rlauer6/OrePAN2-Lite
