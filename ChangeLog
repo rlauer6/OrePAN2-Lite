@@ -1,3 +1,17 @@
+Mon Jul 20 14:55:47 2026  Rob Lauer  <rclauer@gmail.com>
+
+	[1.0.1]:
+	* deps.mk: new
+	* project.mk: new
+	* .gitignore: + *.checked
+	* .includes/git.mk: updated by CPAN::Maker::Bootstrapper
+	* .includes/perl.mk: likewise
+	* .includes/release-notes.mk: likewise
+	* .includes/update.mk: likewise
+	* Makefile: likewise
+	* VERSION: bump
+	* buildspec.yml: '_' => '-'
+
 Mon Jun 22 13:45:29  Rob Lauer  rclauer@gmail.com
 
 	[1.0.0]:
