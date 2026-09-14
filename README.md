@@ -1,119 +1,150 @@
 # OrePAN2::Lite
 
-A lightweight fork of [OrePAN2](https://metacpan.org/pod/OrePAN2) — a DarkPAN
-manager for hosting private Perl module archives — with `LWP::UserAgent`
-replaced by `HTTP::Tiny` throughout, reducing the dependency footprint for
-environments where image size matters (Lambda, containers, minimal build hosts).
+A dependency-light fork of [OrePAN2](https://metacpan.org/pod/OrePAN2) — a
+DarkPAN manager for hosting private Perl module archives — trimmed for use in
+environments where install footprint matters: AWS Lambda and minimal containers.
+
+`OrePAN2::Lite` keeps the parts of OrePAN2 that matter for a private DarkPAN —
+**injection** and **indexing** — and removes the heavy dependencies and the
+sub-commands that pulled them in.
 
 ## What is a DarkPAN?
 
-A DarkPAN is a private CPAN-compatible mirror. It holds tarballs you've built
+A DarkPAN is a private, CPAN-compatible mirror. It holds tarballs you've built
 yourself — internal distributions, forks of CPAN modules, or anything you want
-to install via `cpanm`/`cpm` without publishing to CPAN. Tools like `cpanm`
-and `cpm` can be pointed at a DarkPAN mirror the same way they talk to CPAN.
+to install with `cpanm`/`cpm` without publishing to CPAN. `cpanm` and `cpm` can
+be pointed at a DarkPAN the same way they talk to CPAN.
 
-## What's different from OrePAN2?
+## What changed in 2.0.0
 
-`OrePAN2::Lite` makes two changes to the upstream `OrePAN2` distribution:
+2.0.0 is a substantial diet. The goal is a **foundational** tool with a small,
+predictable dependency tree — because a tool that sits in the bootstrap/install
+path imposes its dependencies on everything downstream.
 
-1. **`OrePAN2::Auditor` uses `HTTP::Tiny` instead of `LWP::UserAgent`.**
-   The auditor compares your DarkPAN's `02packages.details.txt.gz` against
-   a CPAN mirror's copy to identify outdated or private-only packages.
-   Upstream uses `LWP::UserAgent` for the HTTP fetch; this fork uses
-   `HTTP::Tiny` (a core module since Perl 5.14), eliminating the full
-   `libwww-perl` stack and its C-compiled dependencies (`HTML::Parser`,
-   `WWW::RobotRules`, `HTTP::Negotiate`, etc.) from the install.
+### Removed features
 
-2. **`LWP::UserAgent` is removed from the declared dependencies.**
-   `Injector.pm` (for downloading tarballs) already used `HTTP::Tiny`
-   in upstream. With `Auditor.pm` ported, `LWP::UserAgent` is no longer
-   needed anywhere in the distribution.
+- **`orepan2-audit` / `OrePAN2::Auditor`** — removed. Comparing a DarkPAN
+  against CPAN is better expressed as a query than as a bundled sub-command,
+  and it pulled `MooX::Options` and `List::Compare`.
+- **All command-line scripts** (`orepan2-inject`, `orepan2-indexer`,
+  `orepan2-gc`, `orepan2-merge-index`, `orepan2-audit`) — removed.
+  `OrePAN2::Lite` is now a **library**: drive it from your own code (a Lambda
+  handler, a build script, a wrapper CLI). Dropping the CLIs removed the entire
+  `MooX::Options` option-parsing tree.
+- **MetaCPAN provides-optimization in the indexer** — removed. The indexer no
+  longer consults MetaCPAN to shortcut package scanning; it always scans the
+  local tarball. This dropped `MetaCPAN::Client` (and its large tree). For a
+  private DarkPAN the optimization never applied anyway — MetaCPAN doesn't know
+  your private distributions.
+- **`OrePAN2::Index::merge` and `write_gzip`** — removed. Index merging went
+  with `orepan2-merge-index`; gzip writing is handled by
+  `OrePAN2::Indexer`.
 
-Everything else — indexing, injection, garbage collection, index merging —
-is unchanged from upstream.
+### Removed dependencies
 
-## Installation
+`Moo`, `Moo::Role`, `MooX::Options`, `MetaCPAN::Client`, `Archive::Extract`,
+`List::Compare`, `namespace::clean`, `Type::Params`, `Types::Standard`,
+`Types::Common::Numeric`, `Types::Path::Tiny`, `Types::Self`, and (from 1.x)
+`LWP::UserAgent`.
 
-```bash
-cpanm OrePAN2::Lite
-```
+- **Moo + the Type::Tiny stack → `Class::Accessor::Fast`.** The classes used
+  none of Moo's harder features (no lazy attributes to speak of, one method
+  modifier, one delegation). Accessors are now `Class::Accessor::Fast`; runtime
+  type constraints are gone. For a tool whose inputs are operator-controlled,
+  type constraints were a perpetual runtime/install cost guarding against
+  one-time development bugs — that job belongs to the test suite, which runs at
+  build time and ships nothing.
+- **`Archive::Extract` → `Archive::Tar`.** Distributions are `.tar.gz`;
+  `Archive::Extract`'s multi-format generality wasn't used.
+- **`MetaCPAN::Client` → `HTTP::Tiny` + `JSON::PP`.** Inject-by-name (below) is
+  still supported — it now resolves the download URL with a single HTTP call to
+  MetaCPAN's `download_url` API instead of the full client.
 
-Or via `cpm`:
+### Current dependencies
 
-```bash
-cpm install OrePAN2::Lite
-```
+    CPAN::Meta
+    Class::Accessor::Fast
+    File::pushd
+    HTTP::Tiny
+    IO::File::AtomicChange
+    JSON::PP
+    Parse::LocalDistribution
+    Path::Tiny
+    Role::Tiny
+    autodie
 
 ## Usage
 
-### Inject a tarball into your DarkPAN
+`OrePAN2::Lite` is a library. Drive it from Perl:
 
-```bash
-orepan2-inject /path/to/MyModule-1.0.0.tar.gz /path/to/darkpan/
-```
+### Inject a distribution
 
-Or from a URL:
+```perl
+use OrePAN2::Injector ();
 
-```bash
-orepan2-inject https://cpan.metacpan.org/authors/id/A/AU/AUTHOR/Module-1.0.tar.gz \
-    /path/to/darkpan/
+my $injector = OrePAN2::Injector->new( directory => '/path/to/darkpan' );
+
+# from a local file
+$injector->inject('/path/to/MyModule-1.0.0.tar.gz');
+
+# from a URL
+$injector->inject(
+    'https://cpan.metacpan.org/authors/id/A/AU/AUTHOR/Module-1.0.tar.gz' );
+
+# from a git repository
+$injector->inject('git://github.com/you/My-Module.git@1.0.0');
+
+# by module name (resolved via MetaCPAN's download_url API)
+$injector->inject('Some::Module');
 ```
 
 ### Rebuild the index
 
-```bash
-orepan2-indexer /path/to/darkpan/
+```perl
+use OrePAN2::Repository ();
+
+my $repo = OrePAN2::Repository->new( directory => '/path/to/darkpan' );
+$repo->make_index;
 ```
 
 ### Install from your DarkPAN
 
 ```bash
+# cpanm, latest version only
 cpanm --mirror-only --mirror=file:///path/to/darkpan/ MyModule
-```
 
-Or with `cpm`, pointing at an S3/CloudFront-hosted DarkPAN:
-
-```bash
+# cpm, e.g. an S3/CloudFront-hosted DarkPAN
 cpm install --resolver 02packages,https://your-darkpan.example.com/ MyModule
 ```
 
-### Audit your DarkPAN against CPAN
+## Why a library, not a CLI?
 
-```bash
-orepan2-audit \
-    --cpan https://cpan.metacpan.org/modules/02packages.details.txt \
-    --darkpan /path/to/darkpan/modules/02packages.details.txt.gz \
-    --show outdated-modules
-```
-
-## Scripts
-
-| Script | Description |
-|--------|-------------|
-| `orepan2-inject` | Inject a tarball (local file or URL) into a DarkPAN |
-| `orepan2-indexer` | Rebuild `02packages.details.txt.gz` from injected tarballs |
-| `orepan2-audit` | Compare DarkPAN and CPAN indexes to find outdated/private packages |
-| `orepan2-gc` | Remove tarballs not referenced by the current index |
-| `orepan2-merge-index` | Merge two DarkPAN indexes |
+The distributions this is used to build (an S3/SQS Lambda indexing pipeline,
+for one) call the library directly — nothing shells out to the old
+`orepan2-*` scripts. Removing the CLIs removed the entire option-parsing
+dependency tree for zero loss to those consumers. If you want a command-line
+front end, a thin wrapper over the library — for example on
+[CLI::Simple](https://metacpan.org/pod/CLI::Simple) — is a few lines and keeps
+the dependency footprint under your control.
 
 ## Why fork rather than patch upstream?
 
-`OrePAN2` is a well-maintained, actively-used CPAN module. The `LWP::UserAgent`
-dependency is a reasonable default for a general-purpose CLI tool. However for
-environments with strict size budgets (AWS Lambda, minimal container images,
-build environments that avoid C compilation), the full LWP stack is significant
-overhead for what amounts to a single HTTP GET call in one optional sub-command.
-
-Rather than upstream a change that might not suit all users, this fork provides
-a drop-in replacement for environments that care about the footprint difference.
+`OrePAN2` is a well-maintained, widely-used module, and its dependency choices
+are reasonable defaults for a general-purpose CLI tool. This fork optimizes for
+a different case: a **foundational, library-only** tool for footprint-sensitive
+environments (Lambda, minimal containers, no C compilation). Rather than push
+changes that wouldn't suit all users, `OrePAN2::Lite` is a leaner alternative
+for consumers who care about the difference.
 
 ## See Also
 
 - [OrePAN2](https://metacpan.org/pod/OrePAN2) — the upstream distribution
-- [HTTP::Tiny](https://metacpan.org/pod/HTTP::Tiny) — the replacement HTTP client
-- [OrePAN2::S3](https://github.com/rlauer6/orepan2-s3) — S3/SQS-backed
-  DarkPAN indexing for AWS Lambda, which motivated this fork
+- [OrePAN2::S3](https://github.com/rlauer6/orepan2-s3) — S3/SQS-backed DarkPAN
+  indexing for AWS Lambda, which motivated this fork
 
 ## License
 
-Same as OrePAN2: Artistic License 2.0.
+Copyright (C) tokuhirom (upstream OrePAN2).
+
+Same terms as Perl / OrePAN2: this library is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.

@@ -17,6 +17,8 @@ extra-files:
   - ChangeLog
   - share:
       - README.md
+  - t/lib/Local:
+      - t/lib/Local/Util.pm
   - t/dat:
       - t/dat/02.packages.details.txt
       - t/dat/02.packages.details.txt.gz
@@ -24,10 +26,6 @@ extra-files:
       - t/dat/Acme-YakiniQ-0.01.tar.gz
   - t/dat/modules:
       - t/dat/modules/02.packages.txt
-  - t/dat/auditor/cpan:
-      - t/dat/auditor/cpan/02packages.details.txt
-  - t/dat/auditor/darkpan:
-      - t/dat/auditor/darkpan/02packages.details.txt
 resources:
   bugtracker:
     mailto: rclauer@gmail.com

@@ -1,13 +1,3 @@
-# ./lib/OrePAN2/CLI/Indexer.pm.in
-./lib/OrePAN2/CLI/Indexer.pm: \
-    ./lib/OrePAN2.pm \
-    ./lib/OrePAN2/Indexer.pm
-
-# ./lib/OrePAN2/CLI/Inject.pm.in
-./lib/OrePAN2/CLI/Inject.pm: \
-    ./lib/OrePAN2.pm \
-    ./lib/OrePAN2/Repository.pm
-
 # ./lib/OrePAN2/Index.pm.in
 ./lib/OrePAN2/Index.pm: \
     ./lib/OrePAN2.pm \

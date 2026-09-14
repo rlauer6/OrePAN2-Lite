@@ -1,13 +1,23 @@
 package OrePAN2::Role::HasLogger;
 
-use Moo::Role;
+use strict;
+use warnings;
 
-use OrePAN2::Logger ();
+use OrePAN2::Logger;
 
-has log => (
-  is      => 'ro',
-  lazy    => 1,
-  default => sub { OrePAN2::Logger->new },
-);
+use Role::Tiny;
+
+our $VERSION = '@PACKAGE_VERSION@';
+
+sub log { ## no critic
+  my ($self) = @_;
+
+  return $self->{log}
+    if $self->{log};
+
+  $self->{log} = OrePAN2::Logger->new;
+
+  return $self->{log};
+}
 
 1;
