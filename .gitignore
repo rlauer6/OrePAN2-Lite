@@ -25,3 +25,7 @@ bin/orepan2-gc
 bin/orepan2-indexer
 bin/orepan2-inject
 bin/orepan2-merge-index
+**/*.raw
+buildspec.yml.current
+extra-files.mk
+local/**

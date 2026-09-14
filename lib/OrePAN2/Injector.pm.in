@@ -1,12 +1,13 @@
 package OrePAN2::Injector;
 
+use strict;
+use warnings;
+
 use utf8;
 
-use Moo;
-
-use Archive::Extract ();
 use Archive::Tar qw( COMPRESS_GZIP );
 use CPAN::Meta ();
+use English qw(-no_match_vars);
 use File::Basename qw( basename dirname );
 use File::Copy qw( copy );
 use File::Find qw( find );
@@ -15,51 +16,62 @@ use File::Spec ();
 use File::Temp qw( tempdir );
 use File::pushd qw( pushd );
 use HTTP::Tiny ();
-use MetaCPAN::Client ();
-use Types::Standard qw( CodeRef Str );
-use Types::Path::Tiny qw( Path );
+use JSON::PP ();
 
-use namespace::clean;
+use parent qw(Class::Accessor::Fast);
 
-has author => ( is => 'ro', isa => CodeRef | Str, default => 'DUMMY' );
-has directory => ( is => 'ro', isa => Path, coerce => 1, required => 1 );
+__PACKAGE__->mk_accessors(qw(author author_subdir directory));
 
+our $VERSION = '@PACKAGE_VERSION@';
+
+sub new {
+  my ( $class, @args ) = @_;
+
+  my $options = ref $args[0] ? $args[0] : {@args};
+
+  $options->{author} //= 'DUMMY';
+
+  my $self = $class->SUPER::new($options);
+
+  return $self;
+}
+
+########################################################################
 sub inject {
+########################################################################
   my ( $self, $source, $opts ) = @_;
-  local $self->{author}
-    = $opts->{author} || $self->{author} || 'DUMMY';
+
+  local $self->{author}        = $opts->{author} || $self->author || 'DUMMY';
   local $self->{author_subdir} = $opts->{author_subdir} || q{};
 
   my $tarpath;
+
   if ( $source =~ /(?:^git(?:\+\w+)?:|\.git(?:@.+)?$)/ ) {  # steal from App::cpanminus::script
       # git URL has to end with .git when you need to use pin @ commit/tag/branch
-    my ( $uri, $commitish ) = split /(?<=\.git)@/i, $source, 2;
+    my ( $uri, $commitish ) = split /(?<=[.]git)@/xsmi, $source, 2;
 
     # git CLI doesn't support git+http:// etc.
-    $uri =~ s/^git\+//;
+    $uri =~ s/^git[+]//xsm;
     $tarpath = $self->inject_from_git( $uri, $commitish );
   }
-  elsif ( $source =~ m{\Ahttps?://} ) {
+  elsif ( $source =~ m{\Ahttps?://}xsm ) {
     $tarpath = $self->inject_from_http($source);
   }
   elsif ( -f $source ) {
     $tarpath = $self->inject_from_file($source);
   }
-  elsif ( $source =~ m/^[\w_][\w0-9:_]+$/ ) {
+  elsif ( $source =~ m{^[\w_][\w[:digit:]:_]+$}xsm ) {
+    my $api = "https://fastapi.metacpan.org/v1/download_url/$source";
+    my $res = HTTP::Tiny->new->get($api);
+    die "Could not resolve $source via MetaCPAN: $res->{status} $res->{reason}\n"
+      if !$res->{success};
 
-    my $c = MetaCPAN::Client->new( version => 'v1' )
-      || die "Could not get MetaCPAN::Client";
-
-    my $mod = $c->module($source)
-      || die "Could not find $source";
-
-    my $rel = $c->release( $mod->distribution )
-      || die "Could not find distribution for $source";
-
-    my $url = $rel->download_url
-      || die "Could not find url for $source";
+    my $data = JSON::PP::decode_json( $res->{content} );
+    my $url  = $data->{download_url}
+      or die "No download_url for $source\n";
 
     $tarpath = $self->inject_from_http($url);
+
   }
   else {
     die "Unknown source: $source\n";
@@ -71,12 +83,12 @@ sub inject {
 sub tarpath {
   my ( $self, $basename ) = @_;
 
-  my $author  = uc( $self->{author} );
+  my $author  = uc( $self->author );
   my $tarpath = File::Spec->catfile(
     $self->directory, 'authors', 'id',
     substr( $author, 0, 1 ),
     substr( $author, 0, 2 ),
-    $author, $self->{author_subdir}, $basename
+    $author, $self->author_subdir, $basename
   );
   mkpath( dirname($tarpath) );
 
@@ -85,18 +97,25 @@ sub tarpath {
 
 sub _detect_author {
   my ( $self, $source, $archive ) = @_;
+
   my $tmpdir = tempdir( CLEANUP => 1 );
-  my $ae     = Archive::Extract->new( archive => $archive );
-  $ae->extract( to => $tmpdir );
-  my $guard = pushd( glob("$tmpdir/*") );
-  $self->{author}->($source);
+
+  my $tar = Archive::Tar->new;
+  $tar->read($archive);
+  $tar->setcwd($tmpdir);
+  $tar->extract;  # extracts under $tmpdir
+
+  my $guard = pushd( glob "$tmpdir/*" );
+
+  return $self->author->($source);
 }
 
 sub inject_from_file {
   my ( $self, $file ) = @_;
 
   local $self->{author} = $self->_detect_author( $file, $file )
-    if ref $self->{author} eq "CODE";
+    if ref $self->author eq 'CODE';
+
   my $basename = basename($file);
   my $tarpath  = $self->tarpath($basename);
 
@@ -109,15 +128,24 @@ sub inject_from_file {
 sub inject_from_http {
   my ( $self, $url ) = @_;
 
-  # If $self->{author} is not a code reference,
+  # Only https needs TLS; http and file injection never hit this.
+  if ( $url =~ m{\Ahttps://}i && !HTTP::Tiny->can_ssl ) {
+    die "Cannot fetch $url: HTTPS support requires IO::Socket::SSL and "
+      . "Net::SSLeay, which are not installed.\n"
+      . 'Install them, or inject from a local file or an http:// URL '
+      . "instead.\n";
+  }
+
+  # If $self->author is not a code reference,
   # then $tarpath is fixed before http request
   # and HTTP::Tiny->mirror works correctly.
   # So we treat that case first.
-  if ( ref $self->{author} ne "CODE" ) {
+  if ( ref $self->author ne 'CODE' ) {
     my $basename = basename($url);
     my $tarpath  = $self->tarpath($basename);
     my $response = HTTP::Tiny->new->mirror( $url, $tarpath );
-    unless ( $response->{success} ) {
+
+    if ( !$response->{success} ) {
       die "Cannot fetch $url($response->{status} $response->{reason})\n";
     }
     return $tarpath;
@@ -126,7 +154,7 @@ sub inject_from_http {
   my $tmpdir   = tempdir( CLEANUP => 1 );
   my $tmpfile  = "$tmpdir/tmp.tar.gz";
   my $response = HTTP::Tiny->new->mirror( $url, $tmpfile );
-  unless ( $response->{success} ) {
+  if ( !$response->{success} ) {
     die "Cannot fetch $url($response->{status} $response->{reason})\n";
   }
 
@@ -158,16 +186,15 @@ sub inject_from_git {
     }
 
     my $author;
-    if ( ref $self->{author} eq "CODE" ) {
+    if ( ref $self->author eq 'CODE' ) {
       my $guard2 = pushd( [<*>]->[0] );
-      $author = $self->{author}->($repository);
+      $author = $self->author->($repository);
     }
 
     # The repository needs to contains META.json in repository.
     my $metafname = File::Spec->catfile( [<*>]->[0], 'META.json' );
-    unless ( -f $metafname ) {
-      die "$repository does not have a META.json\n";
-    }
+    die "$repository does not have a META.json\n"
+      if !-f $metafname;
 
     my $meta = CPAN::Meta->load_file($metafname);
 
@@ -193,8 +220,9 @@ sub inject_from_git {
   my $tmp_tarpath = File::Temp::mktemp("${tarpath}.XXXXXX");
   $tar->write( $tmp_tarpath, COMPRESS_GZIP );
   unlink $tarpath if -f $tarpath;
-  rename( $tmp_tarpath => $tarpath )
-    or die $!;
+
+  rename $tmp_tarpath => $tarpath
+    or die $OS_ERROR;
 
   return $tarpath;
 }

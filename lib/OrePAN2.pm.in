@@ -2,9 +2,10 @@ package OrePAN2;
 use strict;
 use warnings;
 
-our $VERSION = "0.53";
+our $VERSION = '@PACKAGE_VERSION@';
 
 1;
+
 __END__
 
 =encoding utf-8
